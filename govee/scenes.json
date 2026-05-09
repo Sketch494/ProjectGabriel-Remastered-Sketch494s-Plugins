@@ -1,0 +1,13 @@
+{
+  "categories": {
+    "strobing": ["Fireworks", "Lightning", "Gleam"],
+    "holiday": ["Cherry Blossom Festival", "Candy", "Strawberry", "Marshmallow"],
+    "nature": ["Sunrise", "Sunset", "Forest", "Ocean", "Aurora", "Rainbow"],
+    "ambient_movie": ["Leisure", "Night", "Dreamland", "Night Light"]
+  },
+  "effect_hints": {
+    "movie mode": ["ambient_movie"],
+    "party": ["strobing", "holiday"],
+    "relax": ["nature", "ambient_movie"]
+  }
+}

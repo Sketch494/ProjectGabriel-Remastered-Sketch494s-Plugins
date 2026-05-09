@@ -1,0 +1,11 @@
+name: govee
+version: 1.0.0
+api_version: 1
+author: Sketch494
+description: >-
+  Govee Home OpenAPI control — lights, groups, scenes, Discord webhooks,
+  MQTT events, safety restrictions, and rapid bulk commands.
+enabled: flase
+requirements:
+  - httpx
+  - paho-mqtt

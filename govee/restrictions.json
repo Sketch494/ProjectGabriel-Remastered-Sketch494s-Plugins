@@ -1,0 +1,10 @@
+{
+  "blocked_colors": [],
+  "blocked_scenes": [],
+  "blocked_scene_categories": [],
+  "blocked_groups": [],
+  "block_scene_changes": false,
+  "block_power_off": false,
+  "block_brightness_changes": false,
+  "block_color_changes": false
+}
