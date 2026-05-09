@@ -1,0 +1,19 @@
+name: camera
+version: 1.0.0
+api_version: 1
+author: Sketch494
+description: >-
+  Lets the AI open a webcam (or any cv2-compatible video device) and stream
+  JPEG frames into the same Gemini Live realtime queue used by screen vision.
+  Adds tools openCamera / closeCamera / captureCameraSnapshot / listCameras /
+  getCameraStatus.
+# Off by default — flipping a webcam on without the user knowing is rude.
+# Enable here, then optionally toggle individual tools in config/tools.yml.
+enabled: false
+requirements:
+  - opencv-python
+  - Pillow
+  # Optional: the in-browser MJPEG preview at /camera needs FastAPI + uvicorn.
+  # The plugin still works without them; only the preview gets disabled.
+  - fastapi
+  - uvicorn
