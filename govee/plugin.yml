@@ -5,7 +5,7 @@ author: Sketch494
 description: >-
   Govee Home OpenAPI control — lights, groups, scenes, Discord webhooks,
   MQTT events, safety restrictions, and rapid bulk commands.
-enabled: flase
+enabled: false
 requirements:
   - httpx
   - paho-mqtt
