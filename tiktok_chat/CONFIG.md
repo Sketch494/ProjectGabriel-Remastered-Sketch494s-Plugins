@@ -4,11 +4,13 @@ Copy the block below into Gabriel's main **`config.yml`** under the existing top
 
 The plugin is **disabled by default** in `plugins/tiktok_chat/plugin.yml` — flip `enabled: true` there before the rest matters. Per-tool toggles auto-populate in `config/tools.yml` under `plugin_tools.tiktok_chat`.
 
-Install the runtime dep once:
+Install into **Gabriel’s `.venv`** (same Python as `run.bat`), not a global interpreter:
 
 ```bash
-pip install TikTokLive
+uv pip install --python .venv/Scripts/python.exe TikTokLive "pyee>=11,<12"
 ```
+
+(`pyee` 12+ breaks `TikTokLive`’s imports; pin `<12`.)
 
 > **Note:** `TikTokLive` scrapes TikTok's webcast endpoints. For unattended use you may want a sign-server API key (Eulerstream / SignAPI). Set `api_key` (or `api_key_env`) below if you have one.
 

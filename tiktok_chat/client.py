@@ -33,6 +33,7 @@ import time
 from collections import deque
 from typing import Any
 
+_TIKTOK_IMPORT_ERROR: str | None = None
 try:
     from TikTokLive import TikTokLiveClient  # type: ignore[import-not-found]
     from TikTokLive.events import (  # type: ignore[import-not-found]
@@ -44,7 +45,8 @@ try:
         LikeEvent,
         ShareEvent,
     )
-except Exception:  # pragma: no cover - optional dep
+except Exception as _e:  # pragma: no cover - optional dep
+    _TIKTOK_IMPORT_ERROR = f"{type(_e).__name__}: {_e}"
     TikTokLiveClient = None  # type: ignore[assignment]
     CommentEvent = ConnectEvent = DisconnectEvent = None  # type: ignore[assignment]
     FollowEvent = GiftEvent = LikeEvent = ShareEvent = None  # type: ignore[assignment]
@@ -121,6 +123,7 @@ class TikTokChatClient:
             "connectedSeconds": (time.time() - self._connected_at) if self._connected_at else 0.0,
             "lastError": self._connect_error,
             "lastEventAt": self._last_event_at,
+            "importError": _TIKTOK_IMPORT_ERROR,
         }
 
     def get_recent(
@@ -159,10 +162,12 @@ class TikTokChatClient:
 
     async def connect(self, username: str) -> dict[str, Any]:
         if not self.is_available:
-            return {
-                "result": "error",
-                "message": "TikTokLive is not installed (pip install TikTokLive).",
-            }
+            hint = (
+                "Install into this project's .venv (the same interpreter as run.bat), "
+                "e.g. uv pip install --python .venv/Scripts/python.exe TikTokLive 'pyee>=11,<12'."
+            )
+            detail = _TIKTOK_IMPORT_ERROR or "TikTokLive module not found"
+            return {"result": "error", "message": f"TikTokLive unavailable ({detail}). {hint}"}
         username = (username or "").strip().lstrip("@")
         if not username:
             return {"result": "error", "message": "username is required"}

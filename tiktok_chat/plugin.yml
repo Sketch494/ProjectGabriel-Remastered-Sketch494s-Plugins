@@ -12,3 +12,4 @@ description: >-
 enabled: false
 requirements:
   - TikTokLive
+  - pyee>=11,<12
