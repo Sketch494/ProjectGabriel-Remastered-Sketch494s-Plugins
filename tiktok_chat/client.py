@@ -65,6 +65,10 @@ else:
         TikTokLiveClient = None  # type: ignore[assignment]
         CommentEvent = ConnectEvent = DisconnectEvent = None  # type: ignore[assignment]
         FollowEvent = GiftEvent = LikeEvent = ShareEvent = None  # type: ignore[assignment]
+    else:
+        from .httpx_compat import apply_tiktoklive_httpx_compat
+
+        apply_tiktoklive_httpx_compat()
 
 
 _VALID_MODES = {"buffer", "live_silent", "live_reply"}

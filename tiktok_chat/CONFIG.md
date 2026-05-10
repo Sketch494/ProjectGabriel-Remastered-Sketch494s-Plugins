@@ -108,4 +108,6 @@ TikTokLive loads `https://www.tiktok.com/@HANDLE/live` and parses a **`room_id`*
 3. **TikTok blocked or altered the page** for your IP/region — The library’s inner error may say something like *offline* vs *blocked*. Try another network or VPN if you suspect blocking.
 4. **Sign server (optional)** — Set **`api_key`** / **`api_key_env`** in `config.yml` under `plugins.tiktok_chat` if you use Eulerstream (or similar) for higher reliability on later Webcast steps and rate limits.
 
+5. **`AsyncClient(..., proxies=...)` errors** — Gabriel may ship **httpx 0.28+**, which removed that argument. The plugin patches TikTokLive’s HTTP client on load (`httpx_compat.py`); restart Gabriel after upgrading.
+
 After changing config, restart Gabriel and connect again while the stream is **definitely live** in a normal browser.
