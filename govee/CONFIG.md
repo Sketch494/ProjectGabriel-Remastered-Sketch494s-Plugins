@@ -68,21 +68,27 @@ Do **not** commit real API keys. Prefer environment variables:
 
     automations: []
 
-    music_sync:
+    reactive_lighting:
       enabled: false
-      poll_interval_ms: 120
-      group: bedroom
-      device_ids: []
-      mode: hue_plus_pulse
-      hue_period_seconds: 48
-      saturation: 1.0
-      value: 1.0
-      brightness_base: 55
-      brightness_swing: 28
-      pulse_hz: 0.85
-      brightness_min: 8
-      brightness_max: 100
-      bypass_color_blocks: true
+      bypass_safety_blocks: true
+      targets:
+        group: bedroom
+        device_ids: []
+      thinking_pulse:
+        enabled: true
+        duration_seconds: 3
+        brightness_percent: 100
+      discord_pulse:
+        enabled: true
+        duration_seconds: 3
+        rgb: [88, 101, 242]
+      mood_lighting:
+        enabled: true
+        default_rgb: [255, 255, 255]
+        base_brightness: 85
+        duration_brightness_reference_seconds: 3.0
+        moods:
+          neutral: { rgb: [255, 255, 255], brightness_scale: 1.0 }
 
     emergency_fallback:
       enabled: false
@@ -116,6 +122,22 @@ Run once and use **`listGoveeDevices`** (or refresh the device cache) to fill re
 
 ---
 
+## Reactive lighting (`reactive_lighting`)
+
+Reacts to host events — **no edits to `config.yml` emotions section**. Mood mapping uses **`emotion`** tool animation names (`animation_moods`).
+
+| Host event | Effect |
+|------------|--------|
+| **`ai_thinking_start`** | Raises brightness to **`thinking_pulse.brightness_percent`** for **`duration_seconds`**, then restores (Gemini thought summaries + **`recallMemories`**). |
+| **`discord_notification`** | Applies **`discord_pulse.rgb`** for **`duration_seconds`**, then restores (Discord selfbot incoming handled message). |
+| **`emotion_animation`** | Sets color/brightness from **`mood_lighting.moods`**; brightness scales with the tool’s **`duration`** vs **`duration_brightness_reference_seconds`**. |
+
+Set **`reactive_lighting.enabled: true`** and **`targets.group`** (or **`device_ids`**). Master default in repo **`config.yml`** is **`false`** so behavior stays off until you enable it.
+
+See **`config.yml`** under **`plugins.govee.reactive_lighting`** for a full **`moods`** / **`animation_moods`** example.
+
+---
+
 ## Notes
 
 | Key | Purpose |
@@ -124,7 +146,7 @@ Run once and use **`listGoveeDevices`** (or refresh the device cache) to fill re
 | **`light_control_min_interval_ms`** | Extra pacing for **`POST /device/control`** (colors, brightness, scenes). |
 | **`state_poll_seconds`** | If `> 0`, periodically fetches device state (uses **`max_concurrent_requests`** workers). |
 | **`favorites_path`** | JSON file under **`data/plugins/govee/`** mapping shortcut → Govee scene name (see **`scene_favorites.example.json`**). |
-| **`music_sync`** | Drives lights from **playback position** (local **`playMusic`** + Suno). Not FFT beat detection. Set **`enabled: true`** and restart Gabriel. |
+| **`reactive_lighting`** | Thinking pulse, Discord color flash, mood colors via **`emotion`** tool → **`emotion_animation`** event (see **Reactive lighting**). |
 | **`emergency_fallback`** | After repeated API errors, applies **`apply`** once per cooldown. |
 
 Optional JSON beside the plugin: **`restrictions.json`**, **`colors_extra.json`**. Data-dir override: **`data/plugins/govee/restrictions.override.json`**.

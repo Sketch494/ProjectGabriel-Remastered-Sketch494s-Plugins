@@ -88,22 +88,6 @@ def load_merged_config(
         "automations": [],
         "favorites_path": "",
         "analytics_enabled": True,
-        "music_sync": {
-            "enabled": False,
-            "poll_interval_ms": 120,
-            "group": "",
-            "device_ids": [],
-            "mode": "hue_plus_pulse",
-            "hue_period_seconds": 48.0,
-            "saturation": 1.0,
-            "value": 1.0,
-            "brightness_base": 55.0,
-            "brightness_swing": 28.0,
-            "pulse_hz": 0.85,
-            "brightness_min": 8,
-            "brightness_max": 100,
-            "bypass_color_blocks": True,
-        },
     }
 
     for fname in ("restrictions.json", "colors_extra.json"):

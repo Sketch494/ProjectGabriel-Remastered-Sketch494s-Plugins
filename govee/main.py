@@ -38,7 +38,7 @@ class GoveePlugin(Plugin):
         cfg = ctx.plugin_config() or {}
         ctrl = GoveeController(ctx.logger, ctx.plugin_dir, ctx.data_dir(), cfg if isinstance(cfg, dict) else {})
         try:
-            await ctrl.start(tool_handler_getter=lambda: ctx.tool_handler)
+            await ctrl.start()
         except Exception as e:
             ctx.logger.error("Govee controller failed to start: %s", e, exc_info=True)
             return
@@ -46,6 +46,8 @@ class GoveePlugin(Plugin):
             ctx.logger.warning("govee: tool_handler missing, tools will stay inert")
             return
         ctx.tool_handler.govee = ctrl
+        if getattr(ctrl, "reactive", None):
+            ctrl.reactive.bind_ctx(ctx)
         ctx.logger.info("Govee plugin online (%s devices cached)", len(ctrl.store.devices))
 
     async def teardown(self, ctx: PluginContext):

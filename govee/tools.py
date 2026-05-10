@@ -185,6 +185,10 @@ class GoveeTools(BaseTool):
                     "supportsScene": ctrl.store.capability_supports(d, "devices.capabilities.dynamic_scene", "lightScene"),
                     "summary": s,
                 })
+            rl = ctrl.cfg.get("reactive_lighting") or {}
+            rl_targets = rl.get("targets") if isinstance(rl, dict) else {}
+            if not isinstance(rl_targets, dict):
+                rl_targets = {}
             return {"result": "ok", "devices": devices, "restrictionSummary": {
                 "block_scene_changes": ctrl.cfg.get("block_scene_changes"),
                 "block_power_off": ctrl.cfg.get("block_power_off"),
@@ -201,11 +205,10 @@ class GoveeTools(BaseTool):
                     isinstance(ctrl.cfg.get("emergency_fallback"), dict)
                     and ctrl.cfg["emergency_fallback"].get("enabled")
                 ),
-                "musicSync": {
-                    "enabled": bool((ctrl.cfg.get("music_sync") or {}).get("enabled")),
-                    "group": (ctrl.cfg.get("music_sync") or {}).get("group"),
-                    "deviceIdsCount": len((ctrl.cfg.get("music_sync") or {}).get("device_ids") or []),
-                    "pollIntervalMs": (ctrl.cfg.get("music_sync") or {}).get("poll_interval_ms"),
+                "reactiveLighting": {
+                    "enabled": bool(isinstance(rl, dict) and rl.get("enabled")),
+                    "group": rl_targets.get("group"),
+                    "deviceIdsCount": len(rl_targets.get("device_ids") or []),
                 },
             }}
 

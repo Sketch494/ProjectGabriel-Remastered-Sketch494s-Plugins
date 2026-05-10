@@ -18,7 +18,6 @@ from .config_loader import JsonHotReloader, load_merged_config
 from .device_store import DeviceStore, summarize_from_state
 from .govee_api import GoveeAPI, GoveeAPIError
 from .mqtt_sync import GoveeMqttBridge
-from .music_sync import music_sync_loop
 from .restrictions import RestrictionsEngine
 from . import webhook as discord_webhook
 
@@ -119,6 +118,7 @@ class GoveeController:
         self._last_emergency_mono = 0.0
         self._emergency_lock = asyncio.Lock()
         self._automation_next: dict[int, float] = {}
+        self.reactive: Any = None
 
     def reload_cfg(self, host_cfg: dict[str, Any] | None = None) -> None:
         if host_cfg is not None:
@@ -175,7 +175,7 @@ class GoveeController:
             return scene_name
         return self._favorites_map.get(scene_name.strip().lower(), scene_name)
 
-    async def start(self, *, tool_handler_getter: Any | None = None) -> None:
+    async def start(self) -> None:
         self._running = True
         self.reload_cfg(self._host_cfg)
         try:
@@ -207,17 +207,9 @@ class GoveeController:
         if self.cfg.get("automations"):
             self._bg_tasks.append(asyncio.create_task(self._automations_loop()))
 
-        ms = self.cfg.get("music_sync")
-        if isinstance(ms, dict) and ms.get("enabled") and tool_handler_getter is not None:
-            self._bg_tasks.append(
-                asyncio.create_task(
-                    music_sync_loop(
-                        controller=self,
-                        handler_getter=tool_handler_getter,
-                        logger=self.log,
-                    )
-                )
-            )
+        from .reactive_lighting import ReactiveLighting
+
+        self.reactive = ReactiveLighting(self, dict(self.cfg.get("reactive_lighting") or {}))
 
     def _on_mqtt_event(self, payload: dict[str, Any]) -> None:
         did = str(payload.get("device") or "")
@@ -304,6 +296,8 @@ class GoveeController:
 
     async def stop(self) -> None:
         self._running = False
+        if getattr(self, "reactive", None):
+            self.reactive.disable()
         for t in self._bg_tasks:
             t.cancel()
         if self._bg_tasks:
@@ -509,7 +503,7 @@ class GoveeController:
             self.log.debug("govee state: %s", e)
             return dict(device.get("summary") or {})
 
-    async def apply_music_sync_frame(
+    async def apply_direct_rgb_frame(
         self,
         devices: list[dict[str, Any]],
         *,
@@ -517,7 +511,7 @@ class GoveeController:
         brightness: int,
         bypass_color_blocks: bool,
     ) -> None:
-        """Direct light updates for reactive music sync (not full control_targets / webhook)."""
+        """Apply RGB + brightness without full control_targets (used by reactive lighting)."""
         api = self._ensure_api()
         for dev in devices:
             sku = str(dev.get("sku") or "")
@@ -553,7 +547,7 @@ class GoveeController:
                 summ.update({"color_rgb_int": rgb_int, "brightness": b})
                 self.store.update_summary(dev_id, summ)
             except Exception as e:
-                self.log.debug("govee music sync %s: %s", dev_id, e)
+                self.log.debug("govee direct rgb %s: %s", dev_id, e)
 
     async def control_targets(
         self,
@@ -747,8 +741,8 @@ class GoveeController:
             f"HTTP pacing: all requests ≥{self.cfg.get('min_command_interval_ms')}ms; "
             f"POST /device/control (light changes) ≥{self.cfg.get('light_control_min_interval_ms')}ms.",
             "Scene favorites: set `favorites_path` JSON map (shortcut name → Govee scene name).",
-            f"Music→lights sync: {'on' if (self.cfg.get('music_sync') or {}).get('enabled') else 'off'} — "
-            f"configure `plugins.govee.music_sync`.",
+            f"Reactive lighting: {'on' if (self.cfg.get('reactive_lighting') or {}).get('enabled') else 'off'} — "
+            f"`plugins.govee.reactive_lighting` (thinking / Discord / emotion).",
             "Restriction flags:",
             f"  block_scene_changes={self.cfg.get('block_scene_changes')}, block_power_off={self.cfg.get('block_power_off')}, "
             f"block_brightness={self.cfg.get('block_brightness_changes')}, block_color={self.cfg.get('block_color_changes')}",
