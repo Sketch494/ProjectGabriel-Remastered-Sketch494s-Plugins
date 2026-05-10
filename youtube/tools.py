@@ -187,42 +187,46 @@ class YouTubeTools(BaseTool):
             }
         args = args or {}
 
-        if name == "playYouTube":
-            return await mgr.play(
-                str(args.get("query") or ""),
-                auto_search=bool(args.get("autoSearch", True)),
-            )
+        try:
+            if name == "playYouTube":
+                return await mgr.play(
+                    str(args.get("query") or ""),
+                    auto_search=bool(args.get("autoSearch", True)),
+                )
 
-        if name == "searchYouTube":
-            limit = args.get("limit")
-            results = await mgr.search(
-                str(args.get("query") or ""),
-                limit=int(limit) if limit else None,
-            )
-            return {"result": "ok", "results": results, "count": len(results)}
+            if name == "searchYouTube":
+                limit = args.get("limit")
+                results = await mgr.search(
+                    str(args.get("query") or ""),
+                    limit=int(limit) if limit else None,
+                )
+                return {"result": "ok", "results": results, "count": len(results)}
 
-        if name == "queueYouTube":
-            return await mgr.enqueue(str(args.get("query") or ""))
+            if name == "queueYouTube":
+                return await mgr.enqueue(str(args.get("query") or ""))
 
-        if name == "skipYouTube":
-            return await mgr.skip()
+            if name == "skipYouTube":
+                return await mgr.skip()
 
-        if name == "stopYouTube":
-            return await mgr.stop()
+            if name == "stopYouTube":
+                return await mgr.stop()
 
-        if name == "pauseYouTube":
-            return mgr.pause()
+            if name == "pauseYouTube":
+                return mgr.pause()
 
-        if name == "resumeYouTube":
-            return mgr.resume()
+            if name == "resumeYouTube":
+                return mgr.resume()
 
-        if name == "setYouTubeVolume":
-            return mgr.set_volume(int(args.get("volume") or 80))
+            if name == "setYouTubeVolume":
+                return mgr.set_volume(int(args.get("volume") or 80))
 
-        if name == "clearYouTubeQueue":
-            return mgr.clear_queue()
+            if name == "clearYouTubeQueue":
+                return mgr.clear_queue()
 
-        if name == "getYouTubeStatus":
-            return {"result": "ok", **mgr.status_dict()}
+            if name == "getYouTubeStatus":
+                return {"result": "ok", **mgr.status_dict()}
+        except Exception as e:
+            logger.error(f"youtube tool {name} failed: {e}", exc_info=True)
+            return {"result": "error", "message": str(e)}
 
         return None

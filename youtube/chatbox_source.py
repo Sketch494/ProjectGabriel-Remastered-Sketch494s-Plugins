@@ -1,18 +1,17 @@
 """YouTube chatbox now-playing source.
 
 Implements the chatbox source protocol from the plugin API:
-  * `is_active() -> bool`     — True while a YouTube track is playing.
-  * `render() -> str | None`  — formatted "Now Playing" text, ≤144 chars to
-                                fit VRChat's chatbox cap.
+  * `is_active() -> bool`     — True while a YouTube track is playing and the
+                                host is not showing local pygame music (SFX).
+  * `render() -> str | None`  — formatted text, ≤144 chars (VRChat cap).
 
-The format mirrors the Suno banner so a viewer who has both plugins running
-gets a consistent look. We piggy-back on the host's idle-banner divider
-config (`vrchat.idle_chatbox.divider`) when we need a horizontal rule.
+Template: set ``chatbox_template`` under ``plugins.youtube`` in ``config.yml``.
+Placeholders: ``{header}``, ``{title}``, ``{uploader}``, ``{bar}``, ``{time}``,
+``{queue_suffix}``, ``{video_id}``. Omit ``chatbox_template`` to use the
+built-in multiline layout.
 """
 
 from __future__ import annotations
-
-from typing import Any
 
 
 _BAR_WIDTH = 14
@@ -77,16 +76,88 @@ def _format_now_playing(status: dict[str, Any], paused: bool) -> str:
     return text
 
 
+def _render_template(template: str, status: dict[str, Any], paused: bool) -> str:
+    title = (status.get("title") or "YouTube Video").strip()
+    uploader = (status.get("uploader") or "").strip()
+    pos = float(status.get("position") or 0.0)
+    dur = float(status.get("duration") or 0.0)
+    queue_len = int(status.get("queueLength") or 0)
+    pos_m, pos_s = divmod(int(pos), 60)
+    if dur > 0:
+        dur_m, dur_s = divmod(int(dur), 60)
+        time_line = f"{pos_m}:{pos_s:02d} / {dur_m}:{dur_s:02d}"
+    else:
+        time_line = f"{pos_m}:{pos_s:02d}"
+    progress = (pos / dur) if dur > 0 else 0.0
+    bar = _bar(progress)
+    header = "\u23f8 YT" if paused else "\u25b6 YT"
+    queue_suffix = f" +{queue_len}" if queue_len > 0 else ""
+    vid = str(status.get("videoId") or "")
+    try:
+        text = template.format(
+            header=header,
+            title=title,
+            uploader=uploader,
+            bar=bar,
+            time=time_line,
+            queue_suffix=queue_suffix,
+            video_id=vid,
+        )
+    except (KeyError, ValueError, IndexError):
+        text = _format_now_playing(status, paused)
+    text = text.strip()
+    if len(text) > 144:
+        text = text[:141] + "..."
+    return text
+
+
 class YouTubeChatboxSource:
     """Adapts a YouTubeManager into a chatbox source the host iterates over."""
 
-    def __init__(self, manager_getter, config):
+    def __init__(
+        self,
+        manager_getter: Callable[[], Any],
+        config: Any,
+        *,
+        audio_getter: Callable[[], Any] | None = None,
+        plugin_cfg_getter: Callable[[], dict[str, Any]] | None = None,
+    ):
         self._get = manager_getter
         self._config = config
+        self._audio_get = audio_getter
+        self._plugin_cfg = plugin_cfg_getter or (lambda: {})
+
+    def _local_pygame_music_busy(self) -> bool:
+        """True when SFX / playMusic is driving pygame (chatbox belongs to host)."""
+        audio = self._audio_get() if self._audio_get else None
+        if audio is None:
+            return False
+        try:
+            if not getattr(audio, "_pygame_ready", False):
+                return False
+            import pygame
+
+            return bool(pygame.mixer.music.get_busy() or pygame.mixer.get_busy())
+        except Exception:
+            return False
+
+    def _chatbox_cfg(self) -> dict[str, Any]:
+        try:
+            d = self._plugin_cfg()
+            return d if isinstance(d, dict) else {}
+        except Exception:
+            return {}
 
     def is_active(self) -> bool:
+        cfg = self._chatbox_cfg()
+        if cfg.get("chatbox_enabled") is False:
+            return False
         mgr = self._get()
-        return bool(mgr and getattr(mgr, "is_playing", False))
+        if not mgr or not getattr(mgr, "is_playing", False):
+            return False
+        if self._local_pygame_music_busy():
+            return False
+        return True
 
     def render(self):
         mgr = self._get()
@@ -98,4 +169,9 @@ class YouTubeChatboxSource:
             return None
         if not status or not status.get("isPlaying"):
             return None
-        return _format_now_playing(status, paused=bool(status.get("isPaused")))
+        paused = bool(status.get("isPaused"))
+        cfg = self._chatbox_cfg()
+        raw = cfg.get("chatbox_template")
+        if isinstance(raw, str) and raw.strip():
+            return _render_template(raw, status, paused)
+        return _format_now_playing(status, paused)

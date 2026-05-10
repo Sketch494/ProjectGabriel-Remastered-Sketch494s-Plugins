@@ -45,6 +45,8 @@ class YouTubePlugin(Plugin):
         source = YouTubeChatboxSource(
             manager_getter=lambda: getattr(ctx.tool_handler, "youtube", None) if ctx.tool_handler else None,
             config=ctx.config,
+            audio_getter=lambda: ctx.audio,
+            plugin_cfg_getter=lambda: ctx.plugin_config() or {},
         )
         # Priority 30 sits between local music (10) and Suno (50) so YouTube
         # takes precedence over Suno but yields to a local file the user

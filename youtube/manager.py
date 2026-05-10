@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import time
 from collections import deque
@@ -77,6 +78,11 @@ class YouTubeManager:
         self._cookies_file = str(self._cfg.get("cookies_file") or "").strip() or None
         self._format_str = str(self._cfg.get("ytdlp_format") or "bestaudio/best")
         self._geo_bypass = bool(self._cfg.get("geo_bypass", True))
+        self._resolve_timeout = float(self._cfg.get("resolve_timeout_seconds", 120) or 120)
+        self._search_timeout = float(self._cfg.get("search_timeout_seconds", 90) or 90)
+        self._save_while_playing = bool(self._cfg.get("save_while_playing", True))
+        self._save_dir = str(self._cfg.get("save_dir") or "sfx/youtube").strip() or "sfx/youtube"
+        self._last_saved_path: str | None = None
 
         self._queue: deque[YouTubeTrack] = deque()
         self._history: deque[dict[str, Any]] = deque(maxlen=int(self._cfg.get("history_size", 50)))
@@ -113,6 +119,53 @@ class YouTubeManager:
             opts["extract_flat"] = "in_playlist"
         return opts
 
+    def _download_track_blocking(self, track: YouTubeTrack) -> str | None:
+        """Save audio under ``save_dir`` as ``<video_id>.<ext>``; skip if already present."""
+        import glob
+
+        if YoutubeDL is None:
+            return None
+        os.makedirs(self._save_dir, exist_ok=True)
+        pattern = os.path.join(self._save_dir, f"{track.video_id}.*")
+        existing = glob.glob(pattern)
+        if existing:
+            return existing[0]
+        outtmpl = os.path.join(self._save_dir, f"{track.video_id}.%(ext)s")
+        opts: dict[str, Any] = {
+            "quiet": True,
+            "no_warnings": True,
+            "noplaylist": True,
+            "format": self._format_str,
+            "outtmpl": outtmpl,
+            "geo_bypass": self._geo_bypass,
+        }
+        if self._cookies_file:
+            opts["cookiefile"] = self._cookies_file
+        url = track.webpage_url or f"https://www.youtube.com/watch?v={track.video_id}"
+        with YoutubeDL(opts) as ydl:
+            ydl.download([url])
+        after = glob.glob(pattern)
+        return after[0] if after else None
+
+    def _schedule_save(self, track: YouTubeTrack) -> None:
+        if not self._save_while_playing or not track.video_id:
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+
+        async def _job() -> None:
+            try:
+                path = await asyncio.to_thread(self._download_track_blocking, track)
+                if path:
+                    self._last_saved_path = path
+                    self._log.info(f"youtube: saved track {track.video_id} -> {path}")
+            except Exception as e:
+                self._log.warning(f"youtube: background save failed ({track.video_id}): {e}")
+
+        loop.create_task(_job(), name=f"yt-save-{track.video_id}")
+
     def _info_to_track(self, info: dict[str, Any]) -> YouTubeTrack | None:
         if not isinstance(info, dict):
             return None
@@ -123,13 +176,17 @@ class YouTubeManager:
         if not url:
             # Some flat responses lack a direct url; resolve it explicitly.
             return None
+        vid = str(info.get("id") or info.get("display_id") or "")
+        wp = str(info.get("webpage_url") or "")
+        if vid and not wp:
+            wp = f"https://www.youtube.com/watch?v={vid}"
         return YouTubeTrack(
-            video_id=str(info.get("id") or info.get("display_id") or ""),
+            video_id=vid,
             title=str(info.get("title") or "Unknown title"),
             uploader=str(info.get("uploader") or info.get("channel") or "Unknown"),
             duration=float(info.get("duration") or 0.0),
             stream_url=str(url),
-            webpage_url=str(info.get("webpage_url") or ""),
+            webpage_url=wp,
             thumbnail=str(info.get("thumbnail") or ""),
         )
 
@@ -195,12 +252,16 @@ class YouTubeManager:
             return []
         n = int(limit if limit and limit > 0 else self._search_limit)
         try:
-            return await asyncio.to_thread(self._search_blocking, query, n)
+            return await asyncio.wait_for(
+                asyncio.to_thread(self._search_blocking, query, n),
+                timeout=max(5.0, self._search_timeout),
+            )
+        except asyncio.TimeoutError:
+            self._log.warning(f"yt search timed out after {self._search_timeout:.0f}s")
+            return []
         except Exception as e:
             self._log.warning(f"yt search failed: {e}")
             return []
-
-    async def play(self, query: str, *, auto_search: bool = True) -> dict[str, Any]:
         if not self.is_available:
             return {"result": "error", "message": "yt-dlp is not installed (pip install yt-dlp)"}
         q = (query or "").strip()
@@ -212,7 +273,18 @@ class YouTubeManager:
             return {"result": "error", "message": "input is not a URL/ID and auto_search is disabled"}
 
         try:
-            track = await self._resolve(_normalize_target(q))
+            track = await asyncio.wait_for(
+                self._resolve(_normalize_target(q)),
+                timeout=max(15.0, self._resolve_timeout),
+            )
+        except asyncio.TimeoutError:
+            return {
+                "result": "error",
+                "message": (
+                    f"yt-dlp resolve timed out after {self._resolve_timeout:.0f}s — "
+                    "try again or increase plugins.youtube.resolve_timeout_seconds in config."
+                ),
+            }
         except Exception as e:
             return {"result": "error", "message": str(e)}
 
@@ -231,6 +303,7 @@ class YouTubeManager:
                 "track": asdict(track),
                 "started_at": time.time(),
             })
+        self._schedule_save(track)
         return {"result": "ok", "track": self._track_dict(track), "queueLength": len(self._queue)}
 
     async def enqueue(self, query: str) -> dict[str, Any]:
@@ -242,7 +315,18 @@ class YouTubeManager:
         if not q:
             return {"result": "error", "message": "query/URL is required"}
         try:
-            track = await self._resolve(_normalize_target(q))
+            track = await asyncio.wait_for(
+                self._resolve(_normalize_target(q)),
+                timeout=max(15.0, self._resolve_timeout),
+            )
+        except asyncio.TimeoutError:
+            return {
+                "result": "error",
+                "message": (
+                    f"yt-dlp resolve timed out after {self._resolve_timeout:.0f}s — "
+                    "try again or increase plugins.youtube.resolve_timeout_seconds."
+                ),
+            }
         except Exception as e:
             return {"result": "error", "message": str(e)}
         self._queue.append(track)
@@ -259,21 +343,29 @@ class YouTubeManager:
         return {"result": "ok", "stopped": True}
 
     async def skip(self) -> dict[str, Any]:
-        async with self._player_lock:
-            await self._stop_internal()
-        # _on_player_finished schedules next track; manually advance for instant feedback
-        if self._queue:
-            track = self._queue.popleft()
-            self._player = YouTubePlayer(track, self._audio, volume=self._volume)
-            self._player.set_on_finished(self._on_player_finished)
-            self._audio.set_external_music_active(True)
-            if not self._player.start():
+        try:
+            async with self._player_lock:
+                await self._stop_internal()
+            if self._queue:
+                track = self._queue.popleft()
+                self._player = YouTubePlayer(track, self._audio, volume=self._volume)
+                self._player.set_on_finished(self._on_player_finished)
+                self._audio.set_external_music_active(True)
+                if not self._player.start():
+                    self._audio.set_external_music_active(False)
+                    err = self._player.state.error or "failed to start next track"
+                    self._player = None
+                    return {"result": "error", "message": err}
+                self._schedule_save(track)
+                return {"result": "ok", "now": self._track_dict(track), "queueLength": len(self._queue)}
+            return {"result": "ok", "now": None, "queueLength": 0}
+        except Exception as e:
+            self._log.error(f"youtube skip failed: {e}", exc_info=True)
+            try:
                 self._audio.set_external_music_active(False)
-                err = self._player.state.error or "failed to start next track"
-                self._player = None
-                return {"result": "error", "message": err}
-            return {"result": "ok", "now": self._track_dict(track), "queueLength": len(self._queue)}
-        return {"result": "ok", "now": None, "queueLength": 0}
+            except Exception:
+                pass
+            return {"result": "error", "message": str(e)}
 
     def pause(self) -> dict[str, Any]:
         if self._player is None or not self.is_playing:
@@ -315,6 +407,9 @@ class YouTubeManager:
             "queueLength": len(self._queue),
             "queue": [self._track_dict(t) for t in list(self._queue)[:10]],
             "historyCount": len(self._history),
+            "saveWhilePlaying": self._save_while_playing,
+            "saveDir": self._save_dir,
+            "lastSavedPath": self._last_saved_path,
         }
 
     async def stop_all(self) -> None:
@@ -374,6 +469,8 @@ class YouTubeManager:
             if not self._player.start():
                 self._audio.set_external_music_active(False)
                 self._player = None
+                return
+            self._schedule_save(track)
 
     @staticmethod
     def _track_dict(track: YouTubeTrack) -> dict[str, Any]:
