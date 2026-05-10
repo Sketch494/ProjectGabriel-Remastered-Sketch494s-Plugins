@@ -10,7 +10,7 @@ Install into **Gabriel’s `.venv`** (same Python as `run.bat`), not a global in
 uv pip install --python .venv/Scripts/python.exe TikTokLive "pyee>=11,<12"
 ```
 
-(`pyee` 12+ breaks `TikTokLive`’s imports; pin `<12`.)
+(`pyee` 12+ breaks `TikTokLive`’s imports; pin `<12`.) Recent **tiktoklive** wheels put event classes in `TikTokLive.types.events` instead of `TikTokLive.events`; this plugin tries both.
 
 > **Note:** `TikTokLive` scrapes TikTok's webcast endpoints. For unattended use you may want a sign-server API key (Eulerstream / SignAPI). Set `api_key` (or `api_key_env`) below if you have one.
 

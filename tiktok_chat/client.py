@@ -27,6 +27,7 @@ asyncio task owned by the host loop.
 from __future__ import annotations
 
 import asyncio
+import importlib
 import logging
 import os
 import time
@@ -34,22 +35,36 @@ from collections import deque
 from typing import Any
 
 _TIKTOK_IMPORT_ERROR: str | None = None
+TikTokLiveClient = None  # type: ignore[assignment]
+CommentEvent = ConnectEvent = DisconnectEvent = None  # type: ignore[assignment]
+FollowEvent = GiftEvent = LikeEvent = ShareEvent = None  # type: ignore[assignment]
+
 try:
     from TikTokLive import TikTokLiveClient  # type: ignore[import-not-found]
-    from TikTokLive.events import (  # type: ignore[import-not-found]
-        CommentEvent,
-        ConnectEvent,
-        DisconnectEvent,
-        FollowEvent,
-        GiftEvent,
-        LikeEvent,
-        ShareEvent,
-    )
 except Exception as _e:  # pragma: no cover - optional dep
     _TIKTOK_IMPORT_ERROR = f"{type(_e).__name__}: {_e}"
-    TikTokLiveClient = None  # type: ignore[assignment]
-    CommentEvent = ConnectEvent = DisconnectEvent = None  # type: ignore[assignment]
-    FollowEvent = GiftEvent = LikeEvent = ShareEvent = None  # type: ignore[assignment]
+else:
+    # tiktoklive 5.x moved events under TikTokLive.types.events; older builds use TikTokLive.events
+    _event_import_err: str | None = None
+    for _mod in ("TikTokLive.events", "TikTokLive.types.events"):
+        try:
+            _ev = importlib.import_module(_mod)
+            CommentEvent = _ev.CommentEvent  # type: ignore[assignment]
+            ConnectEvent = _ev.ConnectEvent  # type: ignore[assignment]
+            DisconnectEvent = _ev.DisconnectEvent  # type: ignore[assignment]
+            FollowEvent = _ev.FollowEvent  # type: ignore[assignment]
+            GiftEvent = _ev.GiftEvent  # type: ignore[assignment]
+            LikeEvent = _ev.LikeEvent  # type: ignore[assignment]
+            ShareEvent = _ev.ShareEvent  # type: ignore[assignment]
+            _event_import_err = None
+            break
+        except Exception as _e2:  # pragma: no cover - optional dep
+            _event_import_err = f"{type(_e2).__name__}: {_e2}"
+    if _event_import_err is not None:
+        _TIKTOK_IMPORT_ERROR = _event_import_err
+        TikTokLiveClient = None  # type: ignore[assignment]
+        CommentEvent = ConnectEvent = DisconnectEvent = None  # type: ignore[assignment]
+        FollowEvent = GiftEvent = LikeEvent = ShareEvent = None  # type: ignore[assignment]
 
 
 _VALID_MODES = {"buffer", "live_silent", "live_reply"}
