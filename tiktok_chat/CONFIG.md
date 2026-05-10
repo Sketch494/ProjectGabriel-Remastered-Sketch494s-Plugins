@@ -96,3 +96,16 @@ plugin_tools:
 * **`buffer`** — never auto-injects. Best when the user doesn't want chat to drive the conversation; the AI can still pull lines on demand.
 
 Switch modes at runtime with `setTikTokRelayMode` so you don't have to restart Gabriel to go from "silent watch" to "actively reading chat."
+
+---
+
+## Troubleshooting: `Failed to fetch room id from Webcast`
+
+TikTokLive loads `https://www.tiktok.com/@HANDLE/live` and parses a **`room_id`** from the HTML. That step failed. Typical reasons:
+
+1. **The account is not live** — The creator must be **broadcasting right now**. If they are offline or only posted a video, there is no live room id.
+2. **Wrong username** — Use the **`@handle` from their profile URL** (e.g. `fenyx_the_chibi`), not a display name or a different platform’s handle.
+3. **TikTok blocked or altered the page** for your IP/region — The library’s inner error may say something like *offline* vs *blocked*. Try another network or VPN if you suspect blocking.
+4. **Sign server (optional)** — Set **`api_key`** / **`api_key_env`** in `config.yml` under `plugins.tiktok_chat` if you use Eulerstream (or similar) for higher reliability on later Webcast steps and rate limits.
+
+After changing config, restart Gabriel and connect again while the stream is **definitely live** in a normal browser.

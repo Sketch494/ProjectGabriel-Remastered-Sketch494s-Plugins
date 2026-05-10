@@ -70,6 +70,22 @@ else:
 _VALID_MODES = {"buffer", "live_silent", "live_reply"}
 
 
+def _format_tiktok_connect_error(exc: BaseException, *, max_depth: int = 4) -> str:
+    """Flatten TikTokLive's chained errors (``raise wrapper from cause``)."""
+    parts: list[str] = []
+    seen: set[str] = set()
+    cur: BaseException | None = exc
+    depth = 0
+    while cur is not None and depth < max_depth:
+        s = str(cur).strip()
+        if s and s not in seen:
+            parts.append(s)
+            seen.add(s)
+        cur = cur.__cause__
+        depth += 1
+    return " — ".join(parts) if parts else repr(exc)
+
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
@@ -387,9 +403,9 @@ class TikTokChatClient:
         except asyncio.CancelledError:
             raise
         except Exception as e:
-            self._connect_error = str(e)
+            self._connect_error = _format_tiktok_connect_error(e)
             self._connected = False
-            self._log.error(f"tiktok_chat client error: {e}")
+            self._log.error(f"tiktok_chat client error: {self._connect_error}", exc_info=True)
 
     def _ensure_relay_loop(self) -> None:
         if self._relay_task is not None and not self._relay_task.done():
