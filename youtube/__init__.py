@@ -31,7 +31,8 @@ class YouTubePlugin(Plugin):
     description = (
         "Search YouTube and stream a video's audio through the host audio "
         "output. Tools: playYouTube, searchYouTube, queue/skip/clear, "
-        "pause/resume/volume/status."
+        "pause/resume/volume/status, optional live-chat watch/read/relay "
+        "(requires chat-downloader)."
     )
     author = "Sketch494"
 
@@ -59,7 +60,12 @@ class YouTubePlugin(Plugin):
             return
         try:
             cfg = ctx.plugin_config() or {}
-            mgr = YouTubeManager(cfg, ctx.audio, ctx.logger)
+            mgr = YouTubeManager(
+                cfg,
+                ctx.audio,
+                ctx.logger,
+                handler_getter=lambda: ctx.tool_handler,
+            )
             ctx.tool_handler.youtube = mgr
             ctx.logger.info("youtube plugin ready")
         except Exception as e:
@@ -86,17 +92,28 @@ class YouTubePlugin(Plugin):
         mgr = getattr(ctx.tool_handler, "youtube", None) if ctx.tool_handler else None
         if mgr is None:
             return None
+        st = mgr.status_dict()
+        lc = st.get("liveChat") if isinstance(st.get("liveChat"), dict) else {}
+        lc_hint = ""
+        if lc.get("libraryInstalled"):
+            lc_hint = (
+                " Live chat: `watchYouTubeLiveChat` (optional URL/video ID; defaults "
+                "to the current track), then `getYouTubeLiveChatMessages`. "
+                "`setYouTubeLiveChatRelayMode` can inject chat into the session "
+                "(modes: buffer, live_silent, live_reply)."
+            )
         if not mgr.is_playing:
             return (
                 "YouTube playback available: call `playYouTube` with a search query, "
                 "URL, or video ID to stream a video's audio through your voice output. "
                 "It ducks your voice automatically while the song plays."
+                + lc_hint
             )
-        st = mgr.status_dict()
         return (
             f"YouTube playing: \"{st.get('title')}\" by {st.get('uploader')}. "
             f"Queue length: {st.get('queueLength')}. Use `skipYouTube`, `pauseYouTube`, "
             f"`stopYouTube`, or `setYouTubeVolume` to control playback."
+            + lc_hint
         )
 
 

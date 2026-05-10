@@ -6,11 +6,13 @@ description: >-
   Lets the AI search YouTube and play audio from videos through the host
   audio output. Uses yt-dlp to resolve stream URLs and ffmpeg to decode into
   PyAudio, mirroring the Suno player pipeline. Supports a queue, pause/resume,
-  volume, and now-playing status.
+  volume, now-playing status, and optional live-chat watch/read/relay.
 # Off by default — flip this to true after `pip install yt-dlp`.
 enabled: false
 requirements:
   - yt-dlp
+  # Optional: live / replay chat (`watchYouTubeLiveChat`). Omit if you only need playback.
+  - chat-downloader
   # ffmpeg is needed to decode the streams. The plugin tries imageio_ffmpeg's
   # bundled binary first (already pulled in by the Suno plugin) and falls back
   # to a system ffmpeg on PATH.

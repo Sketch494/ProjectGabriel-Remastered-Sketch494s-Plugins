@@ -23,6 +23,7 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 from collections import deque
 from dataclasses import asdict
 from typing import Any
@@ -32,6 +33,7 @@ try:
 except Exception:  # pragma: no cover - optional dep
     YoutubeDL = None  # type: ignore[assignment]
 
+from .live_chat import YouTubeLiveChatWorker, chat_downloader_available
 from .player import YouTubePlayer, YouTubeTrack
 
 logger = logging.getLogger(__name__)
@@ -67,7 +69,13 @@ def _normalize_target(query: str) -> str:
 
 
 class YouTubeManager:
-    def __init__(self, cfg: dict[str, Any], audio_mgr: Any, log: logging.Logger):
+    def __init__(
+        self,
+        cfg: dict[str, Any],
+        audio_mgr: Any,
+        log: logging.Logger,
+        handler_getter: Callable[[], Any] | None = None,
+    ):
         self._cfg = cfg or {}
         self._audio = audio_mgr
         self._log = log
@@ -89,6 +97,21 @@ class YouTubeManager:
         self._player: YouTubePlayer | None = None
         self._player_lock = asyncio.Lock()
         self._auto_advance_task: asyncio.Task | None = None
+
+        self._handler_get: Callable[[], Any] = handler_getter or (lambda: None)
+        _lc_cap = int(self._cfg.get("live_chat_buffer_size", 300) or 300)
+        self._lc_buffer: deque[dict[str, Any]] = deque(maxlen=max(50, _lc_cap))
+        self._lc_worker: YouTubeLiveChatWorker | None = None
+        self._lc_pump_task: asyncio.Task | None = None
+        self._lc_relay_task: asyncio.Task | None = None
+        self._lc_next_index = 0
+        self._lc_last_relayed_index = -1
+        self._lc_relay_mode = str(self._cfg.get("live_chat_relay_mode") or "buffer").lower()
+        if self._lc_relay_mode not in {"buffer", "live_silent", "live_reply"}:
+            self._lc_relay_mode = "buffer"
+        self._lc_relay_interval = float(self._cfg.get("live_chat_relay_interval_seconds", 12) or 12)
+        self._lc_relay_min = int(self._cfg.get("live_chat_relay_min_messages", 1) or 1)
+        self._lc_prefix = str(self._cfg.get("live_chat_prefix") or "[YT Chat]")
 
     # ---- properties ------------------------------------------------------
 
@@ -262,6 +285,8 @@ class YouTubeManager:
         except Exception as e:
             self._log.warning(f"yt search failed: {e}")
             return []
+
+    async def play(self, query: str, *, auto_search: bool = True) -> dict[str, Any]:
         if not self.is_available:
             return {"result": "error", "message": "yt-dlp is not installed (pip install yt-dlp)"}
         q = (query or "").strip()
@@ -410,9 +435,17 @@ class YouTubeManager:
             "saveWhilePlaying": self._save_while_playing,
             "saveDir": self._save_dir,
             "lastSavedPath": self._last_saved_path,
+            "liveChat": {
+                "libraryInstalled": chat_downloader_available(),
+                "watching": self._lc_worker is not None,
+                "bufferSize": len(self._lc_buffer),
+                "relayMode": self._lc_relay_mode,
+                "relayIntervalSeconds": self._lc_relay_interval,
+            },
         }
 
     async def stop_all(self) -> None:
+        await self.stop_live_chat_watch()
         await self.stop()
 
     # ---- internals -------------------------------------------------------
@@ -471,6 +504,154 @@ class YouTubeManager:
                 self._player = None
                 return
             self._schedule_save(track)
+
+    # ---- live chat -------------------------------------------------------
+
+    async def start_live_chat_watch(self, video_id_or_url: str | None = None) -> dict[str, Any]:
+        if not chat_downloader_available():
+            return {
+                "result": "error",
+                "message": "chat-downloader is not installed (pip install chat-downloader).",
+            }
+        raw = (video_id_or_url or "").strip()
+        if not raw:
+            track = self._player.state.track if self._player else None
+            if track and track.video_id:
+                raw = track.video_id
+        if not raw:
+            return {
+                "result": "error",
+                "message": "Provide videoId/watch URL or start YouTube playback first.",
+            }
+        if _looks_like_url(raw):
+            url = raw
+        elif _looks_like_video_id(raw):
+            url = f"https://www.youtube.com/watch?v={raw}"
+        else:
+            return {"result": "error", "message": "Expected a YouTube watch URL or 11-character video ID."}
+
+        await self.stop_live_chat_watch()
+        self._lc_worker = YouTubeLiveChatWorker(url, self._log)
+        self._lc_worker.start()
+        self._lc_next_index = 0
+        self._lc_last_relayed_index = -1
+        self._lc_buffer.clear()
+
+        loop = asyncio.get_running_loop()
+        self._lc_pump_task = loop.create_task(self._lc_pump_loop(), name="youtube-lc-pump")
+        if self._lc_relay_mode in {"live_silent", "live_reply"}:
+            self._lc_relay_task = loop.create_task(self._lc_relay_loop(), name="youtube-lc-relay")
+
+        return {"result": "ok", "message": f"watching live chat for {url}", **self.status_dict()}
+
+    async def stop_live_chat_watch(self) -> dict[str, Any]:
+        for t in (self._lc_relay_task, self._lc_pump_task):
+            if t is not None and not t.done():
+                t.cancel()
+                try:
+                    await t
+                except (asyncio.CancelledError, Exception):
+                    pass
+        self._lc_relay_task = None
+        self._lc_pump_task = None
+        if self._lc_worker is not None:
+            self._lc_worker.stop()
+            self._lc_worker = None
+        return {"result": "ok", "liveChatStopped": True}
+
+    def get_live_chat_recent(self, *, limit: int = 40, since_index: int | None = None) -> list[dict[str, Any]]:
+        items = list(self._lc_buffer)
+        if since_index is not None:
+            items = [it for it in items if it["index"] > since_index]
+        if limit > 0:
+            items = items[-limit:]
+        return items
+
+    def clear_live_chat_buffer(self) -> dict[str, Any]:
+        n = len(self._lc_buffer)
+        self._lc_buffer.clear()
+        self._lc_next_index = 0
+        self._lc_last_relayed_index = -1
+        return {"result": "ok", "cleared": n}
+
+    async def set_live_chat_relay_mode(
+        self,
+        mode: str,
+        *,
+        interval_seconds: float | None = None,
+    ) -> dict[str, Any]:
+        m = (mode or "").strip().lower()
+        if m not in {"buffer", "live_silent", "live_reply"}:
+            return {"result": "error", "message": f"invalid mode '{mode}'"}
+        self._lc_relay_mode = m
+        if interval_seconds is not None:
+            self._lc_relay_interval = max(2.0, float(interval_seconds))
+
+        if self._lc_relay_task is not None and not self._lc_relay_task.done():
+            self._lc_relay_task.cancel()
+            try:
+                await self._lc_relay_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._lc_relay_task = None
+
+        if m in {"live_silent", "live_reply"} and self._lc_worker is not None:
+            loop = asyncio.get_running_loop()
+            self._lc_relay_task = loop.create_task(self._lc_relay_loop(), name="youtube-lc-relay")
+
+        return {"result": "ok", "liveChatRelayMode": self._lc_relay_mode}
+
+    async def _lc_pump_loop(self) -> None:
+        try:
+            while self._lc_worker is not None:
+                w = self._lc_worker
+                for msg in w.drain(500):
+                    idx = self._lc_next_index
+                    self._lc_next_index += 1
+                    self._lc_buffer.append({"index": idx, **msg})
+                await asyncio.sleep(0.75)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._log.debug(f"youtube live chat pump ended: {e}")
+
+    async def _lc_relay_loop(self) -> None:
+        try:
+            while True:
+                await asyncio.sleep(max(2.0, float(self._lc_relay_interval)))
+                if self._lc_relay_mode == "buffer":
+                    return
+                if not self._lc_buffer:
+                    continue
+                items = [it for it in self._lc_buffer if it["index"] > self._lc_last_relayed_index]
+                if len(items) < self._lc_relay_min:
+                    continue
+                lines = [f"{self._lc_prefix} {it.get('author', '?')}: {it.get('text', '')}" for it in items]
+                self._lc_last_relayed_index = items[-1]["index"]
+                turn_complete = self._lc_relay_mode == "live_reply"
+                await self._inject_live_chat_lines(lines, turn_complete=turn_complete)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            self._log.warning(f"youtube live chat relay error: {e}")
+
+    async def _inject_live_chat_lines(self, lines: list[str], *, turn_complete: bool) -> None:
+        if not lines:
+            return
+        h = self._handler_get()
+        if h is None:
+            return
+        live = getattr(h, "live_session", None)
+        if live is None:
+            return
+        text = "\n".join(lines)
+        try:
+            from google.genai import types
+
+            turns = types.Content(parts=[types.Part(text=text)], role="user")
+            await live.send_client_content_safe(turns, turn_complete=turn_complete)
+        except Exception as e:
+            self._log.debug(f"youtube live chat inject failed: {e}")
 
     @staticmethod
     def _track_dict(track: YouTubeTrack) -> dict[str, Any]:

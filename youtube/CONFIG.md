@@ -7,8 +7,10 @@ The plugin is **disabled by default** in `plugins/youtube/plugin.yml` — flip `
 Install the runtime deps once:
 
 ```bash
-pip install yt-dlp imageio-ffmpeg
+pip install yt-dlp imageio-ffmpeg chat-downloader
 ```
+
+`chat-downloader` is only needed for **`watchYouTubeLiveChat`** / live-chat tools; playback works with yt-dlp alone.
 
 `imageio-ffmpeg` is already pulled in by the Suno plugin; if you have a system `ffmpeg` on PATH that works too. Without ffmpeg the plugin will refuse to start a stream.
 
@@ -57,6 +59,15 @@ pip install yt-dlp imageio-ffmpeg
 
     # Number of finished tracks kept in memory for `getYouTubeStatus`.
     history_size: 50
+
+    # ---- Live / replay chat (optional `pip install chat-downloader`) ----
+    # Ring buffer of normalized chat messages for tool polling.
+    live_chat_buffer_size: 300
+    # How chat reaches the model — see "Live chat relay" below.
+    live_chat_relay_mode: buffer
+    live_chat_relay_interval_seconds: 12
+    live_chat_relay_min_messages: 1
+    live_chat_prefix: "[YT Chat]"
 ```
 
 ---
@@ -73,23 +84,33 @@ pip install yt-dlp imageio-ffmpeg
 | **`pauseYouTube`** / **`resumeYouTube`** | Toggle without dropping the stream. |
 | **`setYouTubeVolume`** | 0-200 (100 = unity). |
 | **`clearYouTubeQueue`** | Drop the queue, keep the current track. |
-| **`getYouTubeStatus`** | Title, uploader, position, queue length, etc. |
+| **`getYouTubeStatus`** | Title, uploader, position, queue length, etc. Includes nested **`liveChat`** (watching, buffer size, relay mode). |
+| **`watchYouTubeLiveChat`** | Start ingesting chat for a URL/video ID (or the current track). Requires chat-downloader. |
+| **`stopYouTubeLiveChat`** | Stop reader + relay; playback unchanged. |
+| **`getYouTubeLiveChatMessages`** | Recent buffered messages (`limit`, optional `sinceIndex` for polling). |
+| **`clearYouTubeLiveChat`** | Clear buffer + indices; reader keeps running if active. |
+| **`setYouTubeLiveChatRelayMode`** | `buffer` \| `live_silent` \| `live_reply`; optional `intervalSeconds`. |
 
 Per-tool toggles in **`config/tools.yml`**:
 
 ```yaml
 plugin_tools:
   youtube:
+    clearYouTubeLiveChat: true
+    clearYouTubeQueue: true
+    getYouTubeLiveChatMessages: true
+    getYouTubeStatus: true
+    pauseYouTube: true
     playYouTube: true
-    searchYouTube: true
     queueYouTube: true
+    resumeYouTube: true
+    searchYouTube: true
+    setYouTubeLiveChatRelayMode: true
+    setYouTubeVolume: true
     skipYouTube: true
     stopYouTube: true
-    pauseYouTube: true
-    resumeYouTube: true
-    setYouTubeVolume: true
-    clearYouTubeQueue: true
-    getYouTubeStatus: true
+    stopYouTubeLiveChat: true
+    watchYouTubeLiveChat: true
 ```
 
 ---
@@ -108,3 +129,17 @@ Notes:
 * The play queue is purely in-memory — it doesn't persist across restarts (saved files do).
 * Pause keeps the ffmpeg subprocess alive so resume is instant. Stop kills it. After ~30 minutes of being paused the upstream HTTP connection may time out; restart with `playYouTube` if that happens.
 * `cookies_file` is only needed for age-restricted or member-only content. Export from your browser via a "cookies.txt" extension.
+
+---
+
+## Live chat relay
+
+Modes (`plugins.youtube.live_chat_relay_mode` or **`setYouTubeLiveChatRelayMode`**):
+
+| Mode | Behavior |
+|------|----------|
+| **`buffer`** | Chat is only visible via **`getYouTubeLiveChatMessages`** (and your own reasoning). Nothing is injected automatically. |
+| **`live_silent`** | Batched chat lines are injected through the Live session on an interval (`live_chat_relay_interval_seconds`, min batch size `live_chat_relay_min_messages`) **without** forcing a completed turn, so the model can absorb context quietly. |
+| **`live_reply`** | Same batched injection but with **turn complete**, so the model may respond out loud when appropriate. |
+
+Prefix each line with `live_chat_prefix` so transcripts stay readable. Injection uses the same **`send_client_content_safe`** path as other mid-session context (including Gemini 3.1 realtime-input behavior).

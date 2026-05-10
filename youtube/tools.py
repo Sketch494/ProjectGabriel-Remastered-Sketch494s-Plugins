@@ -61,6 +61,35 @@ _CLEAR_QUEUE_DESC = (
     "Drop every queued track without stopping the currently playing one."
 )
 
+_WATCH_LC_DESC = (
+    "Start reading YouTube live or replay chat for a watch URL or 11-char video ID. "
+    "If videoIdOrUrl is omitted, uses the currently playing YouTube track. "
+    "Requires `pip install chat-downloader`. Messages buffer in memory for "
+    "`getYouTubeLiveChatMessages` and optional relay into the AI session.\n"
+    "**Invocation Condition:** Call when the user wants to follow chat on a "
+    "stream or VOD, react to chat, or monitor superchats while audio plays."
+)
+
+_STOP_LC_DESC = (
+    "Stop the YouTube live-chat reader thread and relay task. Playback is unchanged."
+)
+
+_GET_LC_DESC = (
+    "Return recent buffered chat lines (author, text, index). Use sinceIndex "
+    "to poll only new messages after the last batch."
+)
+
+_CLEAR_LC_DESC = (
+    "Clear the in-memory YouTube chat buffer and reset indices. Does not stop the reader."
+)
+
+_RELAY_LC_DESC = (
+    "Control how chat reaches the model. `buffer` (default): only tools expose chat. "
+    "`live_silent`: periodically inject batched chat as user context without ending "
+    "your turn. `live_reply`: same injection but with turn_complete so the model may "
+    "reply out loud. Optional intervalSeconds overrides plugins.youtube.live_chat_relay_interval_seconds."
+)
+
 
 class YouTubeTools(BaseTool):
     tool_key = "youtube"
@@ -158,6 +187,64 @@ class YouTubeTools(BaseTool):
                 description=_STATUS_DESC,
                 parameters={"type": "OBJECT", "properties": {}},
             ),
+            types.FunctionDeclaration(
+                name="watchYouTubeLiveChat",
+                description=_WATCH_LC_DESC,
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "videoIdOrUrl": {
+                            "type": "STRING",
+                            "description": "Optional watch URL, youtu.be link, or video ID; defaults to now-playing.",
+                        },
+                    },
+                },
+            ),
+            types.FunctionDeclaration(
+                name="stopYouTubeLiveChat",
+                description=_STOP_LC_DESC,
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
+            types.FunctionDeclaration(
+                name="getYouTubeLiveChatMessages",
+                description=_GET_LC_DESC,
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "limit": {
+                            "type": "INTEGER",
+                            "description": "Max messages to return (most recent). Default 40.",
+                        },
+                        "sinceIndex": {
+                            "type": "INTEGER",
+                            "description": "Only messages with index greater than this.",
+                        },
+                    },
+                },
+            ),
+            types.FunctionDeclaration(
+                name="clearYouTubeLiveChat",
+                description=_CLEAR_LC_DESC,
+                parameters={"type": "OBJECT", "properties": {}},
+            ),
+            types.FunctionDeclaration(
+                name="setYouTubeLiveChatRelayMode",
+                description=_RELAY_LC_DESC,
+                parameters={
+                    "type": "OBJECT",
+                    "properties": {
+                        "mode": {
+                            "type": "STRING",
+                            "description": "One of: buffer, live_silent, live_reply.",
+                        },
+                        "intervalSeconds": {
+                            "type": "NUMBER",
+                            "description": "Seconds between relay batches when using live_silent/live_reply.",
+                        },
+                    },
+                    "required": ["mode"],
+                },
+            ),
         ]
 
     @property
@@ -176,6 +263,11 @@ class YouTubeTools(BaseTool):
             "setYouTubeVolume",
             "clearYouTubeQueue",
             "getYouTubeStatus",
+            "watchYouTubeLiveChat",
+            "stopYouTubeLiveChat",
+            "getYouTubeLiveChatMessages",
+            "clearYouTubeLiveChat",
+            "setYouTubeLiveChatRelayMode",
         }
         if name not in known:
             return None
@@ -225,6 +317,33 @@ class YouTubeTools(BaseTool):
 
             if name == "getYouTubeStatus":
                 return {"result": "ok", **mgr.status_dict()}
+
+            if name == "watchYouTubeLiveChat":
+                v = args.get("videoIdOrUrl")
+                raw = str(v).strip() if v is not None and str(v).strip() else None
+                return await mgr.start_live_chat_watch(raw)
+
+            if name == "stopYouTubeLiveChat":
+                return await mgr.stop_live_chat_watch()
+
+            if name == "getYouTubeLiveChatMessages":
+                lim = args.get("limit")
+                since = args.get("sinceIndex")
+                items = mgr.get_live_chat_recent(
+                    limit=int(lim) if lim is not None else 40,
+                    since_index=int(since) if since is not None else None,
+                )
+                return {"result": "ok", "messages": items, "count": len(items)}
+
+            if name == "clearYouTubeLiveChat":
+                return mgr.clear_live_chat_buffer()
+
+            if name == "setYouTubeLiveChatRelayMode":
+                interval = args.get("intervalSeconds")
+                return await mgr.set_live_chat_relay_mode(
+                    str(args.get("mode") or ""),
+                    interval_seconds=float(interval) if interval is not None else None,
+                )
         except Exception as e:
             logger.error(f"youtube tool {name} failed: {e}", exc_info=True)
             return {"result": "error", "message": str(e)}
