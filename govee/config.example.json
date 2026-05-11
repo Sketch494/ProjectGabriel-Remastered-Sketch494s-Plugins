@@ -1,0 +1,75 @@
+{
+  "api_keys": [],
+  "api_key_env": "GOVEE_API_KEY",
+  "discord_webhook": "",
+  "discord_webhook_env": "",
+
+  "device_refresh_seconds": 300,
+  "state_poll_seconds": 0,
+
+  "command_cooldown_ms": 0,
+  "min_command_interval_ms": 30,
+  "light_control_min_interval_ms": 45,
+  "max_concurrent_requests": 4,
+
+  "default_brightness_min": 1,
+  "default_brightness_max": 100,
+
+  "block_scene_changes": false,
+  "block_power_off": false,
+  "block_brightness_changes": false,
+  "block_color_changes": false,
+  "require_confirmation_for_power_off": false,
+  "require_confirmation_for_scene": false,
+  "admin_override_param": false,
+
+  "blocked_colors": [],
+  "blocked_scenes": [],
+  "blocked_scene_categories": [],
+
+  "allowed_devices": [],
+  "blocked_devices": [],
+  "blocked_groups": [],
+
+  "device_groups": {
+    "bedroom": [],
+    "desk": []
+  },
+  "room_restrictions": {},
+  "room_presets": {
+    "movie_mode": {
+      "group": "bedroom",
+      "brightness": 18,
+      "scene_name": "Leisure"
+    }
+  },
+  "device_permissions": {},
+
+  "mqtt_enabled": false,
+  "mqtt_host": "mqtt.openapi.govee.com",
+  "mqtt_port": 8883,
+
+  "favorites_path": "scene_favorites.json",
+  "automations": [],
+  "_automations_example": {
+    "interval_seconds": 3600,
+    "group": "bedroom",
+    "brightness": 40,
+    "note": "Copy entries into automations[] in config.yml; remove this key."
+  },
+  "emergency_fallback": {
+    "enabled": false,
+    "consecutive_failures": 5,
+    "cooldown_seconds": 300,
+    "source_label": "emergency_fallback",
+    "apply": {
+      "group": "bedroom",
+      "power_on": true,
+      "brightness": 80,
+      "scene_name": "Leisure"
+    }
+  },
+
+  "debug": true,
+  "analytics_enabled": true
+}
