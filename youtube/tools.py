@@ -64,14 +64,17 @@ _CLEAR_QUEUE_DESC = (
 _WATCH_LC_DESC = (
     "Start reading YouTube live or replay chat for a watch URL or 11-char video ID. "
     "If videoIdOrUrl is omitted, uses the currently playing YouTube track. "
-    "Requires `pip install chat-downloader`. Messages buffer in memory for "
-    "`getYouTubeLiveChatMessages` and optional relay into the AI session.\n"
+    "Requires `pip install chat-downloader`. By default (plugins.youtube."
+    "live_chat_relay_mode) batched chat is injected so the model replies aloud "
+    "(`live_reply`); use `setYouTubeLiveChatRelayMode` or config to change that. "
+    "When `live_chat_save_memories` is enabled (default), viewer lines are also "
+    "stored in Gabriel memory for later recall.\n"
     "**Invocation Condition:** Call when the user wants to follow chat on a "
     "stream or VOD, react to chat, or monitor superchats while audio plays."
 )
 
 _STOP_LC_DESC = (
-    "Stop the YouTube live-chat reader thread and relay task. Playback is unchanged."
+    "Stop the YouTube live-chat reader, relay task, and periodic memory saver. Playback is unchanged."
 )
 
 _GET_LC_DESC = (
@@ -84,10 +87,11 @@ _CLEAR_LC_DESC = (
 )
 
 _RELAY_LC_DESC = (
-    "Control how chat reaches the model. `buffer` (default): only tools expose chat. "
-    "`live_silent`: periodically inject batched chat as user context without ending "
-    "your turn. `live_reply`: same injection but with turn_complete so the model may "
-    "reply out loud. Optional intervalSeconds overrides plugins.youtube.live_chat_relay_interval_seconds."
+    "Control how chat reaches the model. `live_reply` (default): batched chat is injected "
+    "with turn_complete so the model can reply out loud to viewers. `live_silent`: same "
+    "batches as background context without ending your turn. `buffer`: no injection — "
+    "only `getYouTubeLiveChatMessages` exposes chat. Optional intervalSeconds overrides "
+    "plugins.youtube.live_chat_relay_interval_seconds."
 )
 
 

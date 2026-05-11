@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 
 _VIDEO_ID_RE = re.compile(r"^[A-Za-z0-9_-]{11}$")
 _URL_HINT_RE = re.compile(r"^(https?://|www\.|youtu\.be/|youtube\.com/)", re.IGNORECASE)
+_LC_VID_IN_URL_RE = re.compile(r"(?:v=|youtu\.be/)([A-Za-z0-9_-]{11})")
 
 
 def _looks_like_video_id(s: str) -> bool:
@@ -66,6 +67,33 @@ def _normalize_target(query: str) -> str:
     if _looks_like_video_id(q):
         return f"https://www.youtube.com/watch?v={q}"
     return f"ytsearch1:{q}"
+
+
+def _extract_watch_video_id(url_or_id: str) -> str:
+    raw = (url_or_id or "").strip()
+    if _looks_like_video_id(raw):
+        return raw.strip()
+    m = _LC_VID_IN_URL_RE.search(raw)
+    if m:
+        return m.group(1)
+    return "unknown"
+
+
+def _memory_feature_enabled_in_config() -> bool:
+    try:
+        from pathlib import Path
+
+        import yaml
+
+        p = Path("config.yml")
+        if not p.exists():
+            return True
+        with open(p, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+        mem = data.get("memory") if isinstance(data, dict) else {}
+        return bool(mem.get("enabled", True)) if isinstance(mem, dict) else True
+    except Exception:
+        return True
 
 
 class YouTubeManager:
@@ -106,12 +134,25 @@ class YouTubeManager:
         self._lc_relay_task: asyncio.Task | None = None
         self._lc_next_index = 0
         self._lc_last_relayed_index = -1
-        self._lc_relay_mode = str(self._cfg.get("live_chat_relay_mode") or "buffer").lower()
+        self._lc_relay_mode = str(self._cfg.get("live_chat_relay_mode") or "live_reply").lower()
         if self._lc_relay_mode not in {"buffer", "live_silent", "live_reply"}:
             self._lc_relay_mode = "buffer"
-        self._lc_relay_interval = float(self._cfg.get("live_chat_relay_interval_seconds", 12) or 12)
+        self._lc_relay_interval = float(self._cfg.get("live_chat_relay_interval_seconds", 15) or 15)
         self._lc_relay_min = int(self._cfg.get("live_chat_relay_min_messages", 1) or 1)
         self._lc_prefix = str(self._cfg.get("live_chat_prefix") or "[YT Chat]")
+
+        self._lc_save_memories = bool(self._cfg.get("live_chat_save_memories", True))
+        self._lc_memory_interval = float(self._cfg.get("live_chat_memory_interval_seconds", 20) or 20)
+        self._lc_memory_max_chars = int(self._cfg.get("live_chat_memory_max_chars", 6000) or 6000)
+        self._lc_memory_category = str(self._cfg.get("live_chat_memory_category") or "youtube_live_chat").strip() or "youtube_live_chat"
+        _mt = str(self._cfg.get("live_chat_memory_type") or "short_term").lower().strip()
+        if _mt not in {"long_term", "short_term", "quick_note"}:
+            _mt = "short_term"
+        self._lc_memory_type: str = _mt
+
+        self._lc_memory_task: asyncio.Task | None = None
+        self._lc_memory_saved_index = -1
+        self._lc_watch_video_id = ""
 
     # ---- properties ------------------------------------------------------
 
@@ -441,6 +482,9 @@ class YouTubeManager:
                 "bufferSize": len(self._lc_buffer),
                 "relayMode": self._lc_relay_mode,
                 "relayIntervalSeconds": self._lc_relay_interval,
+                "memorySaveEnabled": self._lc_save_memories,
+                "memoryIntervalSeconds": self._lc_memory_interval,
+                "watchVideoId": self._lc_watch_video_id or None,
             },
         }
 
@@ -531,32 +575,38 @@ class YouTubeManager:
             return {"result": "error", "message": "Expected a YouTube watch URL or 11-character video ID."}
 
         await self.stop_live_chat_watch()
+        self._lc_watch_video_id = _extract_watch_video_id(url)
         self._lc_worker = YouTubeLiveChatWorker(url, self._log)
         self._lc_worker.start()
         self._lc_next_index = 0
         self._lc_last_relayed_index = -1
+        self._lc_memory_saved_index = -1
         self._lc_buffer.clear()
 
         loop = asyncio.get_running_loop()
         self._lc_pump_task = loop.create_task(self._lc_pump_loop(), name="youtube-lc-pump")
         if self._lc_relay_mode in {"live_silent", "live_reply"}:
             self._lc_relay_task = loop.create_task(self._lc_relay_loop(), name="youtube-lc-relay")
+        if self._lc_save_memories:
+            self._lc_memory_task = loop.create_task(self._lc_memory_loop(), name="youtube-lc-memory")
 
         return {"result": "ok", "message": f"watching live chat for {url}", **self.status_dict()}
 
     async def stop_live_chat_watch(self) -> dict[str, Any]:
-        for t in (self._lc_relay_task, self._lc_pump_task):
+        for t in (self._lc_memory_task, self._lc_relay_task, self._lc_pump_task):
             if t is not None and not t.done():
                 t.cancel()
                 try:
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
+        self._lc_memory_task = None
         self._lc_relay_task = None
         self._lc_pump_task = None
         if self._lc_worker is not None:
             self._lc_worker.stop()
             self._lc_worker = None
+        self._lc_watch_video_id = ""
         return {"result": "ok", "liveChatStopped": True}
 
     def get_live_chat_recent(self, *, limit: int = 40, since_index: int | None = None) -> list[dict[str, Any]]:
@@ -572,6 +622,7 @@ class YouTubeManager:
         self._lc_buffer.clear()
         self._lc_next_index = 0
         self._lc_last_relayed_index = -1
+        self._lc_memory_saved_index = -1
         return {"result": "ok", "cleared": n}
 
     async def set_live_chat_relay_mode(
@@ -635,6 +686,100 @@ class YouTubeManager:
         except Exception as e:
             self._log.warning(f"youtube live chat relay error: {e}")
 
+    async def _lc_memory_loop(self) -> None:
+        try:
+            while self._lc_worker is not None:
+                await asyncio.sleep(max(10.0, float(self._lc_memory_interval)))
+                if not self._lc_save_memories or self._lc_worker is None:
+                    continue
+                if not _memory_feature_enabled_in_config():
+                    continue
+                wm = self._lc_memory_saved_index
+                items = [dict(x) for x in list(self._lc_buffer) if x["index"] > wm]
+                if not items:
+                    continue
+                items.sort(key=lambda x: int(x.get("index", 0)))
+                vid = self._lc_watch_video_id or "unknown"
+                last_idx = await asyncio.to_thread(
+                    self._persist_lc_chat_memory_batch,
+                    items,
+                    vid,
+                    self._lc_memory_category,
+                    self._lc_memory_type,
+                    self._lc_memory_max_chars,
+                )
+                if last_idx is not None:
+                    self._lc_memory_saved_index = last_idx
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:
+            self._log.debug(f"youtube live chat memory loop ended: {e}")
+
+    def _persist_lc_chat_memory_batch(
+        self,
+        items: list[dict[str, Any]],
+        video_id: str,
+        category: str,
+        memory_type: str,
+        max_chars: int,
+    ) -> int | None:
+        try:
+            from src.memory import (
+                MEMORY_TYPE_LONG_TERM,
+                MEMORY_TYPE_QUICK_NOTE,
+                MEMORY_TYPE_SHORT_TERM,
+                memory_system,
+            )
+        except ImportError:
+            return None
+        if not memory_system.is_available():
+            return None
+        valid_types = {
+            "long_term": MEMORY_TYPE_LONG_TERM,
+            "short_term": MEMORY_TYPE_SHORT_TERM,
+            "quick_note": MEMORY_TYPE_QUICK_NOTE,
+        }
+        mt = valid_types.get(memory_type, MEMORY_TYPE_SHORT_TERM)
+        lines: list[str] = []
+        first_idx: int | None = None
+        last_idx: int | None = None
+        lines.append(
+            f"YouTube live chat log for video {video_id} "
+            f"(viewer display names and messages for recall later)."
+        )
+        for it in items:
+            idx = int(it.get("index", -1))
+            auth = str(it.get("author") or "?").strip() or "?"
+            if len(auth) > 80:
+                auth = auth[:77] + "..."
+            txt = str(it.get("text") or "").strip()
+            if not txt:
+                continue
+            if len(txt) > 400:
+                txt = txt[:397] + "..."
+            lines.append(f"YouTube viewer '{auth}' said: {txt}")
+            if first_idx is None:
+                first_idx = idx
+            last_idx = idx
+        if first_idx is None or last_idx is None:
+            return None
+        body = "\n".join(lines)
+        if len(body) > max_chars:
+            body = body[: max_chars - 3] + "..."
+        key = f"yt_lc_{video_id}_{first_idx}_{last_idx}"
+        res = memory_system.save(
+            key=key,
+            content=body,
+            category=category,
+            memory_type=mt,
+            tags=["youtube_live_chat", "viewer_chat", video_id],
+        )
+        if res.get("success"):
+            self._log.info(f"youtube: saved live chat memory {key}")
+            return last_idx
+        self._log.debug(f"youtube: live chat memory save failed: {res.get('message')}")
+        return None
+
     async def _inject_live_chat_lines(self, lines: list[str], *, turn_complete: bool) -> None:
         if not lines:
             return
@@ -644,7 +789,15 @@ class YouTubeManager:
         live = getattr(h, "live_session", None)
         if live is None:
             return
-        text = "\n".join(lines)
+        body = "\n".join(lines)
+        if turn_complete:
+            text = (
+                "New YouTube chat below — reply out loud to viewers when it fits "
+                "the moment (short, natural; use names when it helps).\n\n"
+                + body
+            )
+        else:
+            text = body
         try:
             from google.genai import types
 

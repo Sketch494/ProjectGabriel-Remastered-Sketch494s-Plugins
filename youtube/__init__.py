@@ -98,9 +98,10 @@ class YouTubePlugin(Plugin):
         if lc.get("libraryInstalled"):
             lc_hint = (
                 " Live chat: `watchYouTubeLiveChat` (optional URL/video ID; defaults "
-                "to the current track), then `getYouTubeLiveChatMessages`. "
-                "`setYouTubeLiveChatRelayMode` can inject chat into the session "
-                "(modes: buffer, live_silent, live_reply)."
+                "to the current track). Default relay is vocal replies (`live_reply`); "
+                "viewer messages can also be saved to memory when "
+                "`live_chat_save_memories` is true. Use `setYouTubeLiveChatRelayMode` "
+                "for `buffer` / `live_silent` only."
             )
         if not mgr.is_playing:
             return (

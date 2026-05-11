@@ -92,6 +92,73 @@ poll();
 </html>"""
 
 
+# Compact layout for embedding in the control Panel (iframe). Same stream + stats as /camera.
+_EMBED_HTML_TEMPLATE = """<!DOCTYPE html>
+<html>
+<head>
+<title>{{APP_NAME}} Camera</title>
+<meta http-equiv="cache-control" content="no-cache">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; background: #0a0a0b; color: #c8c8d0; font-family: ui-monospace, monospace; }
+  .wrap { display: flex; flex-direction: column; height: 100%; min-height: 240px; }
+  .stream-wrap {
+    flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center;
+    background: #000; border-bottom: 1px solid #222;
+  }
+  .stream { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; }
+  .bar {
+    flex-shrink: 0; display: flex; align-items: center; justify-content: space-between;
+    gap: 8px; padding: 6px 10px; font-size: 11px; background: #121214; border-top: 1px solid #1e1e22;
+  }
+  .stats { display: flex; flex-wrap: wrap; gap: 10px 14px; }
+  .kv { color: #888; }
+  .kv b { color: #6ee7ff; font-weight: 600; }
+  .kv.warn b { color: #fbbf24; }
+  .kv.bad b { color: #f87171; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="stream-wrap">
+    <img class="stream" src="/camera/stream" alt="camera stream" />
+  </div>
+  <div class="bar">
+    <div class="stats" id="stat-lines">…</div>
+  </div>
+</div>
+<script>
+async function poll() {
+  try {
+    const r = await fetch('/camera/data');
+    const d = await r.json();
+    const act = d.active;
+    const lines = [
+      ['Live', act ? 'yes' : 'idle', act ? '' : 'warn'],
+      ['Device', d.device_index ?? '—', ''],
+      ['Frames', String(d.frames_sent), ''],
+      ['Size', d.last_size ? d.last_size.join('×') : '—', ''],
+      ['Uptime', d.open_seconds.toFixed(1) + 's', act ? '' : 'warn'],
+    ];
+    document.getElementById('stat-lines').innerHTML = lines.map(function(row) {
+      var cls = row[2] ? 'kv ' + row[2] : 'kv';
+      return '<span class="' + cls + '">' + row[0] + ': <b>' + row[1] + '</b></span>';
+    }).join('');
+  } catch (e) {}
+  setTimeout(poll, 500);
+}
+poll();
+</script>
+</body>
+</html>"""
+
+
+def _build_embed_html(app_name: str) -> str:
+    import html as _html
+    return _EMBED_HTML_TEMPLATE.replace("{{APP_NAME}}", _html.escape(app_name))
+
+
 def _build_html(app_name: str) -> str:
     import html as _html
     return _HTML_TEMPLATE.replace("{{APP_NAME}}", _html.escape(app_name))
@@ -147,6 +214,13 @@ def start_server(*, port: int = 8768, fps: int = 15, app_name: str = "Gabriel") 
     @vapp.get("/camera", response_class=HTMLResponse)
     async def camera_page():
         return html_page
+
+    embed_page = _build_embed_html(app_name)
+
+    @vapp.get("/camera/embed", response_class=HTMLResponse)
+    async def camera_embed():
+        """Minimal chrome for iframe embedding (e.g. control Panel Camera tab)."""
+        return embed_page
 
     @vapp.get("/camera/data")
     async def camera_data():

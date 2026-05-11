@@ -64,10 +64,17 @@ pip install yt-dlp imageio-ffmpeg chat-downloader
     # Ring buffer of normalized chat messages for tool polling.
     live_chat_buffer_size: 300
     # How chat reaches the model — see "Live chat relay" below.
-    live_chat_relay_mode: buffer
-    live_chat_relay_interval_seconds: 12
+    # Default live_reply: model speaks back to chat on each batch.
+    live_chat_relay_mode: live_reply
+    live_chat_relay_interval_seconds: 15
     live_chat_relay_min_messages: 1
     live_chat_prefix: "[YT Chat]"
+    # Persist chat to Gabriel memory (same backend as saveMemory). Uses viewer names in text.
+    live_chat_save_memories: true
+    live_chat_memory_interval_seconds: 20
+    live_chat_memory_type: short_term   # long_term | short_term | quick_note
+    live_chat_memory_category: youtube_live_chat
+    live_chat_memory_max_chars: 6000
 ```
 
 ---
@@ -84,7 +91,7 @@ pip install yt-dlp imageio-ffmpeg chat-downloader
 | **`pauseYouTube`** / **`resumeYouTube`** | Toggle without dropping the stream. |
 | **`setYouTubeVolume`** | 0-200 (100 = unity). |
 | **`clearYouTubeQueue`** | Drop the queue, keep the current track. |
-| **`getYouTubeStatus`** | Title, uploader, position, queue length, etc. Includes nested **`liveChat`** (watching, buffer size, relay mode). |
+| **`getYouTubeStatus`** | Title, uploader, position, queue length, etc. Includes nested **`liveChat`** (watching, buffer size, relay mode, memory save flags). |
 | **`watchYouTubeLiveChat`** | Start ingesting chat for a URL/video ID (or the current track). Requires chat-downloader. |
 | **`stopYouTubeLiveChat`** | Stop reader + relay; playback unchanged. |
 | **`getYouTubeLiveChatMessages`** | Recent buffered messages (`limit`, optional `sinceIndex` for polling). |
@@ -130,6 +137,20 @@ Notes:
 * Pause keeps the ffmpeg subprocess alive so resume is instant. Stop kills it. After ~30 minutes of being paused the upstream HTTP connection may time out; restart with `playYouTube` if that happens.
 * `cookies_file` is only needed for age-restricted or member-only content. Export from your browser via a "cookies.txt" extension.
 
+* **Live chat → memories:** With **`live_chat_save_memories: true`** (default), while **`watchYouTubeLiveChat`** is active the host periodically writes **`short_term`** memories (by default) containing viewer display names and their messages, keyed like `yt_lc_<videoId>_<firstIdx>_<lastIdx>`. Requires **`memory.enabled`** in main `config.yml` and a working memory backend. Use **`long_term`** only if you want chat retained past short-term TTL; busy chats generate many rows.
+
+---
+
+## Live chat persistent memory
+
+| Key | Purpose |
+|-----|---------|
+| **`live_chat_save_memories`** | When true (default), flush buffered chat into the memory DB on an interval while watching. |
+| **`live_chat_memory_interval_seconds`** | Minimum seconds between memory batches (default 20). |
+| **`live_chat_memory_type`** | `short_term` (default, ~7-day TTL), `quick_note` (~6 h), or `long_term`. |
+| **`live_chat_memory_category`** | Stored category string (default `youtube_live_chat`). |
+| **`live_chat_memory_max_chars`** | Max stored body length per batch (default 6000). |
+
 ---
 
 ## Live chat relay
@@ -138,8 +159,8 @@ Modes (`plugins.youtube.live_chat_relay_mode` or **`setYouTubeLiveChatRelayMode`
 
 | Mode | Behavior |
 |------|----------|
-| **`buffer`** | Chat is only visible via **`getYouTubeLiveChatMessages`** (and your own reasoning). Nothing is injected automatically. |
-| **`live_silent`** | Batched chat lines are injected through the Live session on an interval (`live_chat_relay_interval_seconds`, min batch size `live_chat_relay_min_messages`) **without** forcing a completed turn, so the model can absorb context quietly. |
-| **`live_reply`** | Same batched injection but with **turn complete**, so the model may respond out loud when appropriate. |
+| **`live_reply`** *(default)* | Batched chat is injected with **turn complete**, so the model typically **replies out loud** to viewers on each interval (after `live_chat_relay_min_messages` new lines). Use `live_chat_relay_interval_seconds` so she can finish speaking before the next batch (often 12–20s). |
+| **`live_silent`** | Same batched injection **without** forcing a completed turn — background context only. |
+| **`buffer`** | Chat is only visible via **`getYouTubeLiveChatMessages`**. Nothing is injected automatically. |
 
 Prefix each line with `live_chat_prefix` so transcripts stay readable. Injection uses the same **`send_client_content_safe`** path as other mid-session context (including Gemini 3.1 realtime-input behavior).
